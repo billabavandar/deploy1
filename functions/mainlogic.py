@@ -78,12 +78,20 @@ SCOPES = [
 ] 
 
 # --- LLM Initialization ---
-llm = ChatOpenAI(
-    model_name="deepseek/deepseek-r1-0528-qwen3-8b:free",
-    openai_api_key=os.getenv("OPENROUTER_API_KEY"), # Assuming your .env has TOGETHER_API_KEY
-    openai_api_base="https://openrouter.ai/api/v1",
-)
-model = llm # Using 'model' as an alias for consistency with the original code.
+llm = None
+model = None
+
+def get_llm():
+    """Initialize LLM if not already initialized."""
+    global llm, model
+    if llm is None:
+        llm = ChatOpenAI(
+            model_name="deepseek/deepseek-r1-0528-qwen3-8b:free",
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1",
+        )
+        model = llm
+    return llm
 
 # --- Mock Dentist Database ---
 # Changed keys to phone numbers
@@ -95,8 +103,17 @@ authorized_dentists = {
 # ==============================================================================
 # 3. GOOGLE SERVICE
 # ==============================================================================
+
+# Placeholders for Google services
+_drive_service = None
+_calendar_service = None
+
 def get_drive():
     """Authenticates a user via OAuth 2.0 and returns a Drive service object."""
+    global _drive_service
+    if _drive_service is not None:
+        return _drive_service
+    
     creds = None
     
     # The file token.json stores the user's access and refresh tokens.
@@ -147,6 +164,7 @@ def get_drive():
     try:
         service = build('drive', 'v3', credentials=creds)
         print("Google Drive service initialized successfully.")
+        _drive_service = service
         return service
     except HttpError as e:
         print(f"An HTTP error occurred building Drive service: {e}")
@@ -250,6 +268,10 @@ def get_calendar_service_oauth():
     Initializes and returns the Google Calendar API service using OAuth 2.0 Client ID.
     Handles user authentication via browser for the first run and uses token.json thereafter.
     """
+    global _calendar_service
+    if _calendar_service is not None:
+        return _calendar_service
+    
     creds = None
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
@@ -277,6 +299,7 @@ def get_calendar_service_oauth():
     try:
         service = build('calendar', 'v3', credentials=creds)
         print("Google Calendar service initialized successfully.")
+        _calendar_service = service
         return service
     except HttpError as error:
         print(f"An HTTP error occurred while building the service: {error}")
@@ -320,8 +343,10 @@ def sl(serializable_messages_list):
 # ==============================================================================
 # 4. TOOL DEFINITIONS
 # ==============================================================================
-def create_tools(calendar_service =get_calendar_service_oauth()):
+def create_tools(calendar_service=None):
     """Creates all the necessary tools for the agents."""
+    if calendar_service is None:
+        calendar_service = get_calendar_service_oauth()
 
     # --- Tool Functions ---
     # MODIFICATION: Added 'location' parameter to the function

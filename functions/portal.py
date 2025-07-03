@@ -33,12 +33,38 @@ try:
     import firebase_admin
     from firebase_admin import db
     FIREBASE_DATABASE_URL = "https://diesel-ellipse-463111-a5-default-rtdb.asia-southeast1.firebasedatabase.app/"
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app(options={'databaseURL': FIREBASE_DATABASE_URL})
-    root_ref = db.reference('/')
-except Exception as e:
-    print(f"❌ Firebase connection failed: {e}")
+    
+    firebase_app = None
     root_ref = None
+
+    def get_firebase_app():
+        """Initialize Firebase app if not already initialized."""
+        global firebase_app
+        if firebase_app is None:
+            try:
+                if not firebase_admin._apps:
+                    firebase_app = firebase_admin.initialize_app(options={'databaseURL': FIREBASE_DATABASE_URL})
+                else:
+                    firebase_app = firebase_admin._apps[0]
+            except Exception as e:
+                print(f"❌ Firebase connection failed: {e}")
+                firebase_app = None
+        return firebase_app
+
+    def get_db_ref():
+        """Get database reference, initializing Firebase if needed."""
+        global root_ref
+        if root_ref is None:
+            if get_firebase_app() is not None:
+                root_ref = db.reference('/')
+        return root_ref
+
+except Exception as e:
+    print(f"❌ Firebase import failed: {e}")
+    def get_firebase_app():
+        return None
+    def get_db_ref():
+        return None
 
 
 app = Flask(__name__)
@@ -372,6 +398,7 @@ def send_scan_remark():
     if not (user_id and case_id and remark):
         flash('Missing data to send scan remark.', 'danger')
         return redirect(request.referrer or '/')
+    root_ref = get_db_ref()
     if root_ref:
         try:
             # Set current_stage and active in Firebase for this doctor
@@ -404,6 +431,7 @@ def search():
     case_id = request.args.get('case_id', '').strip().lower()
 
     results = []
+    root_ref = get_db_ref()
     if root_ref:
         try:
             user_sessions = root_ref.child('user_sessions').get() or {}
@@ -456,6 +484,7 @@ def submit():
 
     user_id = doctor
 
+    root_ref = get_db_ref()
     if root_ref:
         try:
             case_ref = root_ref.child('user_sessions').child(user_id).child(case_id)
@@ -479,6 +508,7 @@ def update_status():
     if not (user_id and case_id and status):
         flash('Missing data for update.', 'danger')
         return redirect('/')
+    root_ref = get_db_ref()
     if root_ref:
         try:
             case_ref = root_ref.child('user_sessions').child(user_id).child(case_id)
@@ -656,6 +686,7 @@ def porter_order():
         "pincode": pickup_addr_json['address'].get('postcode', ''),
         "country": pickup_addr_json['address'].get('country', 'India')
     }
+    root_ref = get_db_ref()
     if root_ref:
         try:
             case_ref = root_ref.child('user_sessions').child(user_id).child(case_id)
@@ -765,6 +796,7 @@ def mark_scan_received():
     if not (user_id and case_id):
         flash('Missing data to mark scan as received.', 'danger')
         return redirect(request.referrer or '/')
+    root_ref = get_db_ref()
     if root_ref:
         try:
             case_ref = root_ref.child('user_sessions').child(user_id).child(case_id)

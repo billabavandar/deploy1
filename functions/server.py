@@ -69,24 +69,35 @@ class NoThinkLLMWrapper(BaseChatModel):
 
 
 FIREBASE_DATABASE_URL = "https://diesel-ellipse-463111-a5-default-rtdb.asia-southeast1.firebasedatabase.app/"
-firebase_app = None # To hold the initialized Firebase app instance
-try:
-    # Initialize Firebase Admin SDK using Application Default Credentials.
-    # Specify the databaseURL to connect to your Realtime Database instance.
-    firebase_app = firebase_admin.initialize_app(
-        options={'databaseURL': FIREBASE_DATABASE_URL}
-    )
-    print(f"Firebase app initialized successfully for Realtime Database: '{FIREBASE_DATABASE_URL}'.")
-except Exception as e:
-    print(f"ERROR: Could not initialize Firebase Admin SDK or connect to Realtime Database.")
-    print(f"Please ensure you have replaced 'YOUR_REALTIME_DATABASE_URL_HERE' with your actual URL,")
-    print(f"and that ADC are configured and billing is enabled for your project.")
-    print(f"Error details: {e}")
-    sys.exit(1) # Exit if initialization fails, as the app can't function
 
-# Get a reference to the root of the database
-# All operations start from this reference
-root_ref = db.reference('/')
+# Placeholder for Firebase app and database reference
+firebase_app = None
+root_ref = None
+
+def get_firebase_app():
+    """Initialize Firebase app if not already initialized."""
+    global firebase_app
+    if firebase_app is None:
+        try:
+            firebase_app = firebase_admin.initialize_app(
+                options={'databaseURL': FIREBASE_DATABASE_URL}
+            )
+            print(f"Firebase app initialized successfully for Realtime Database: '{FIREBASE_DATABASE_URL}'.")
+        except Exception as e:
+            print(f"ERROR: Could not initialize Firebase Admin SDK or connect to Realtime Database.")
+            print(f"Please ensure you have replaced 'YOUR_REALTIME_DATABASE_URL_HERE' with your actual URL,")
+            print(f"and that ADC are configured and billing is enabled for your project.")
+            print(f"Error details: {e}")
+            raise e
+    return firebase_app
+
+def get_db_ref():
+    """Get database reference, initializing Firebase if needed."""
+    global root_ref
+    if root_ref is None:
+        get_firebase_app()  # Ensure Firebase is initialized
+        root_ref = db.reference('/')
+    return root_ref
 
 bot_response =""
 # Import the necessary functions and components from your mainlogic.py
@@ -134,27 +145,54 @@ FORWARD_TO_WHATSAPP_NUMBER = os.getenv("FORWARD_TO_WHATSAPP_NUMBER")
 ACCESS_TOKEN = os.getenv("ACESS")
 print(TWILIO_WHATSAPP_NUMBER)
 print(FORWARD_TO_WHATSAPP_NUMBER)
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
+# Placeholder for Twilio client
+twilio_client = None
+
+def get_twilio_client():
+    """Initialize Twilio client if not already initialized."""
+    global twilio_client
+    if twilio_client is None:
+        twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    return twilio_client
+
+# --- Temporary storage for media files ---
 # --- Temporary storage for media files ---
 MEDIA_TEMP_DIR = os.path.join(tempfile.gettempdir(), "twilio_media_bot")
 os.makedirs(MEDIA_TEMP_DIR, exist_ok=True)
 print(f"Temporary media directory: {MEDIA_TEMP_DIR}")
-user_sessions_fb = root_ref.child('user_sessions')
 
+# Placeholder for Firebase user sessions reference
+user_sessions_fb = None
 
-# --- LLM Initialization (from mainlogic.py) ---
-llm = ChatOpenAI(
-    model_name="deepseek/deepseek-r1-0528:free",
-    openai_api_key=os.getenv("OPENROUTER_API_KEY"), # Assuming your .env has TOGETHER_API_KEY
-    openai_api_base="https://openrouter.ai/api/v1",
-)
+def get_user_sessions_fb():
+    """Get user sessions Firebase reference, initializing if needed."""
+    global user_sessions_fb
+    if user_sessions_fb is None:
+        root_ref = get_db_ref()
+        user_sessions_fb = root_ref.child('user_sessions')
+    return user_sessions_fb
 
-#llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
-llm = ChatOllama(model="deepseek-r1:7b")
-llm = NoThinkLLMWrapper(wrapped_llm=llm)
-llm = ChatOllama(model="llama3.1" ,temperature=0.6)
-model = llm
+# Placeholder for LLM
+llm = None
+model = None
+
+def get_llm():
+    """Initialize LLM if not already initialized."""
+    global llm, model
+    if llm is None:
+        llm = ChatOpenAI(
+            model_name="deepseek/deepseek-r1-0528:free",
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1",
+        )
+        
+        #llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
+        llm = ChatOllama(model="deepseek-r1:7b")
+        llm = NoThinkLLMWrapper(wrapped_llm=llm)
+        llm = ChatOllama(model="llama3.1", temperature=0.6)
+        model = llm
+    return llm
 #======================================
 #intent prompts
 intent_classification_prompt = ChatPromptTemplate.from_messages([
@@ -190,7 +228,7 @@ Response: "{input}"
 
 Classification (express/normal/unrelated):"""
 )
-intent_chain = intent_classification_prompt | llm | output_parser
+
 confirm_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are an AI assistant that analyzes user responses."),
     ("human", """You are given a yes-or-no question and a user's response.
@@ -204,7 +242,7 @@ Question: {question}
 User's Response: {input}
 """)
 ])
-confirm_chain = confirm_prompt | llm | output_parser
+
 new_aligner_case_prompt = ChatPromptTemplate.from_messages([
     ("human","""You are an intent classifier for a dental aligner assistant chatbot.  
 Your job is to classify the user's response into one of the following intents:
@@ -223,8 +261,7 @@ Examples:
 
 Now classify this message:
 {user_input}""")])
-new_aligner_case_chain = new_aligner_case_prompt | llm | output_parser
-express_chain = express_prompt | llm | output_parser
+
 choose_prompt = ChatPromptTemplate.from_template("""
 You are a helpful assistant for a dental aligner service. Classify the user's message into one of the following categories:
 
@@ -236,7 +273,7 @@ User message: "{input}"
 
 Respond with only one of these three labels: submit_scan, schedule_scan, or unrelated.
 """)
-choose_chain = choose_prompt | llm | StrOutputParser()
+
 byproduct_prompt = ChatPromptTemplate.from_template("""
 You are an intelligent product assistant. A user may ask about a dental product listed in the following catalog:
 
@@ -257,7 +294,27 @@ Your task is to:
 Here is the user message:
 {user_input}
 """)
-byproduct_chain = byproduct_prompt|llm|output_parser
+
+# Placeholder for intent chains
+intent_chain = None
+confirm_chain = None
+new_aligner_case_chain = None
+express_chain = None
+choose_chain = None
+byproduct_chain = None
+
+def get_intent_chains():
+    """Initialize intent chains if not already initialized."""
+    global intent_chain, confirm_chain, new_aligner_case_chain, express_chain, choose_chain, byproduct_chain
+    if intent_chain is None:
+        llm = get_llm()
+        intent_chain = intent_classification_prompt | llm | output_parser
+        confirm_chain = confirm_prompt | llm | output_parser
+        new_aligner_case_chain = new_aligner_case_prompt | llm | output_parser
+        express_chain = express_prompt | llm | output_parser
+        choose_chain = choose_prompt | llm | StrOutputParser()
+        byproduct_chain = byproduct_prompt | llm | output_parser
+    return intent_chain, confirm_chain, new_aligner_case_chain, express_chain, choose_chain, byproduct_chain
 # --- Global state for each user (for simplicity; ideally use a database) ---
 
 # ==============================================================================
@@ -321,7 +378,7 @@ def send_message_to_user(user_id, case_id, case_data):
     
     try:
         # Send text message
-        twilio_client.messages.create(
+        get_twilio_client().messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=user_id,
             body=message_body
@@ -330,7 +387,7 @@ def send_message_to_user(user_id, case_id, case_data):
 
         # Send media messages if any
         for media_link in quote_media:
-            twilio_client.messages.create(
+            get_twilio_client().messages.create(
                 from_=TWILIO_WHATSAPP_NUMBER,
                 to=user_id,
                 media_url=[media_link]
@@ -347,7 +404,7 @@ def send_message_to_user(user_id, case_id, case_data):
     
     try:
         # Send text message
-        twilio_client.messages.create(
+        get_twilio_client().messages.create(
             from_=TWILIO_WHATSAPP_NUMBER,
             to=user_id,
             body=message_body
@@ -356,7 +413,7 @@ def send_message_to_user(user_id, case_id, case_data):
 
         # Send media messages if any
         for media_link in quote_media:
-            twilio_client.messages.create(
+            get_twilio_client().messages.create(
                 from_=TWILIO_WHATSAPP_NUMBER,
                 to=user_id,
                 media_url=[media_link]
@@ -391,6 +448,7 @@ def update_db(user_id,session) :
 
 def initialize_user_session(user_id):
     """Initializes the session state for a new user."""
+    user_sessions_fb = get_user_sessions_fb()
     user_sessions_fb.child(user_id).set({
             'app_state': "",
             'auth_memory' : False,
@@ -466,7 +524,7 @@ def forward_media_to_number(media_url, sender_whatsapp_id, label="images"):
             {"type": "text", "text": drive_link}                      # Corresponds to {{3}}
         ]
     })
-            root_ref.child("quote").child(id.replace("=", "").replace(".", "-")).set({"client" : sender_whatsapp_id,"caseid" : caseid})
+            get_db_ref().child("quote").child(id.replace("=", "").replace(".", "-")).set({"client" : sender_whatsapp_id,"caseid" : caseid})
             delete_file_after_delay(temp_file_path, delay=5)
             return True
         else :
@@ -487,11 +545,12 @@ def forward_media_to_number(media_url, sender_whatsapp_id, label="images"):
     return False
 
 def handle_production(msgid,msg) :
-    data = root_ref.child("quote").child(msgid.replace("=", "").replace(".", "-")).get()
+    data = get_db_ref().child("quote").child(msgid.replace("=", "").replace(".", "-")).get()
     print(data)
+    user_sessions_fb = get_user_sessions_fb()
     user_sessions_fb.child(data["client"]).child(data["caseid"]).child("quote").set(msg)
     # Fetch patient name from namebook, fallback to 'current patient' if not found
-    patient_name = root_ref.child('namebook').child(data['caseid']).get() or data['caseid']
+    patient_name = get_db_ref().child('namebook').child(data['caseid']).get() or data['caseid']
     send_whatsapp_text(data["client"], f"Your quotation for {patient_name} has been processed successfully. It is {msg} ")
     user_sessions_fb.child(data["client"]).child("active").set(data["caseid"])
     user_sessions_fb.child(data["client"]).child("current_stage").set("awaiting_quote")
@@ -504,6 +563,12 @@ def handle_bot_logic(user_id, message_body, num_media, media_urls, media_content
     manual_test =False
     temp = False
     caseid =""
+    
+    # Initialize lazy loaded components
+    get_llm()  # Ensure LLM is loaded
+    intent_chain, confirm_chain, new_aligner_case_chain, express_chain, choose_chain, byproduct_chain = get_intent_chains()
+    user_sessions_fb = get_user_sessions_fb()
+    
      # --- Memory Deserialization at the START ---
     # Ensure 'auth_memory' is a ConversationBufferMemory object
     if 'auth_memory' in session and session['auth_memory'] is not False and session['auth_memory'] is not None:
@@ -738,7 +803,7 @@ Please choose how you'd like to proceed with the new aligner case:
                 caseid = str(uuid.uuid4())
                 session[caseid] ={}
                 session['active'] = caseid
-                session[caseid]['quote'] = root_ref.child("products").child(session["app_state"]).get("price",0) 
+                session[caseid]['quote'] = get_db_ref().child("products").child(session["app_state"]).get("price",0) 
                 session[caseid]['name'] = caseid
                 session['current_stage'] = "fetching_name"
                 bot_response = "Great please let us know the full name of patient"
@@ -962,7 +1027,7 @@ Your task:
             except Exception as e:
                 print(f"[WARN] Could not rename Google Drive folder: {e}")
             session[session['active']]['name'] = get_name
-            root_ref.child('namebook').child(session['active']).set(get_name)
+            get_db_ref().child('namebook').child(session['active']).set(get_name)
             message_body = 'unrelated'
             session['current_stage'] = 'choose'
 
@@ -1335,6 +1400,10 @@ def verify():
 
 @app.route("/webhook", methods=["POST"])
 def whatsapp_webhook():
+    # Initialize lazy-loaded services
+    get_db_ref()  # Initialize Firebase
+    get_user_sessions_fb()  # Initialize user sessions reference
+    
     data = request.get_json()
     try:
         # Navigate the webhook payload structure safely
@@ -1357,7 +1426,7 @@ def whatsapp_webhook():
             message = value['messages'][0]
             contacts = value.get("contacts", []) # Get contacts for sender_id
             msg_id = message.get("id")
-            msg_ref = root_ref.child("processed_messages").child(msg_id.replace('.','-'))
+            msg_ref = get_db_ref().child("processed_messages").child(msg_id.replace('.','-'))
 
             if msg_ref.get() is not None:
                 print(f"[DEDUPLICATION] Message ID {msg_id} already processed. Skipping.")
@@ -1400,6 +1469,7 @@ def whatsapp_webhook():
             # Add other message types (audio, video, document, etc.) as needed
 
             # --- SESSION HANDLING ---
+            user_sessions_fb = get_user_sessions_fb()
             session = user_sessions_fb.child(sender_id).get()
 
             if session is None:
