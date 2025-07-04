@@ -15,13 +15,12 @@ REQUIRED_SECRETS = [
     "OPENROUTER_API_KEY",
     "WHATSAPP_ACCESS_TOKEN", # This is your 'ACCESS_TOKEN' from server.py
     "DATABASE_URL",
-    "PORTER_API_KEY",
     "ACESS", # This is the token from portal.py
 ]
 
 # --- Cloud Function for the WhatsApp Bot ---
 @https_fn.on_request(secrets=REQUIRED_SECRETS)
-def bot_webhook(request: https_fn.Request):
+def whatsappBot(request: https_fn.Request):
     """ Routes incoming requests to the bot's Flask app (server.py). """
     # Initialize lazy-loaded services when the function is called
     from server import get_firebase_app, get_llm
@@ -33,7 +32,7 @@ def bot_webhook(request: https_fn.Request):
 
 # --- Cloud Function for the Admin Portal ---
 @https_fn.on_request(secrets=REQUIRED_SECRETS)
-def portal(request: https_fn.Request):
+def adminPortal(request: https_fn.Request):
     """ Serves the HTML and handles forms for the admin web portal (portal.py). """
     # Initialize lazy-loaded services when the function is called
     from portal import get_firebase_app
